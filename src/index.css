@@ -1,0 +1,226 @@
+/* GSD2 Config - Global Styles (matches gsd.build theme) */
+/* Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net> */
+
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Theme tokens
+ *
+ * Palette lives in plain CSS variables on :root (dark, default) and is
+ * overridden under [data-theme="light"]. Tailwind color names bind to those
+ * variables via the `@theme` block below, so `bg-gsd-bg` / `text-gsd-text`
+ * automatically re-resolve when the `data-theme` attribute flips — no
+ * rebuild, no class swap, no component changes.
+ *
+ * The three-way user preference (system | dark | light) lives in localStorage
+ * and is resolved to an effective `dark` or `light` by src/lib/theme.ts,
+ * which writes `data-theme` on `<html>` at boot and on change.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --gsd-bg: #000000;
+  --gsd-surface: rgba(255, 255, 255, 0.03);
+  --gsd-surface-solid: #0a0a0a;
+  --gsd-surface-hover: rgba(255, 255, 255, 0.05);
+  --gsd-border: #27272a;          /* zinc-800 */
+  --gsd-border-strong: #3f3f46;   /* zinc-700 */
+  --gsd-text: #ffffff;
+  --gsd-text-secondary: #a1a1aa;  /* zinc-400 */
+  --gsd-text-dim: #71717a;        /* zinc-500 */
+  --gsd-text-muted: #52525b;      /* zinc-600 */
+  --gsd-accent: #7dcfff;          /* brand cyan */
+  --gsd-accent-hover: rgba(124, 207, 255, 0.7);
+  --gsd-accent-dim: rgba(124, 207, 255, 0.15);
+  --gsd-accent-fg: #000000;       /* foreground on accent backgrounds */
+  --gsd-success: #22c55e;
+  --gsd-warning: #eab308;
+  --gsd-danger: #ef4444;
+
+  /* Non-palette but theme-sensitive values referenced in global rules below */
+  --gsd-grid-line: rgba(255, 255, 255, 0.015);
+  --gsd-scrollbar-thumb: #27272a;
+  --gsd-scrollbar-thumb-hover: #52525b;
+}
+
+[data-theme="light"] {
+  --gsd-bg: #fafafa;
+  --gsd-surface: rgba(0, 0, 0, 0.025);
+  --gsd-surface-solid: #f4f4f5;          /* zinc-100 */
+  --gsd-surface-hover: rgba(0, 0, 0, 0.05);
+  --gsd-border: #e4e4e7;                 /* zinc-200 */
+  --gsd-border-strong: #d4d4d8;          /* zinc-300 */
+  --gsd-text: #18181b;                   /* zinc-900 */
+  --gsd-text-secondary: #52525b;         /* zinc-600 */
+  --gsd-text-dim: #71717a;               /* zinc-500 */
+  --gsd-text-muted: #a1a1aa;             /* zinc-400 */
+  --gsd-accent: #0284c7;                 /* sky-600 — readable on white */
+  --gsd-accent-hover: rgba(2, 132, 199, 0.8);
+  --gsd-accent-dim: rgba(2, 132, 199, 0.12);
+  --gsd-accent-fg: #ffffff;              /* white text on the darker accent */
+  --gsd-success: #15803d;                /* green-700 */
+  --gsd-warning: #a16207;                /* yellow-700 */
+  --gsd-danger: #dc2626;                 /* red-600 */
+
+  --gsd-grid-line: rgba(0, 0, 0, 0.03);
+  --gsd-scrollbar-thumb: #d4d4d8;
+  --gsd-scrollbar-thumb-hover: #a1a1aa;
+}
+
+@theme inline {
+  /* Bind Tailwind color names to the themed CSS variables. `@theme inline`
+   * emits `color: var(--gsd-bg)` (not a snapshot of the value) so runtime
+   * theme switches update every Tailwind utility automatically. */
+  --color-gsd-bg: var(--gsd-bg);
+  --color-gsd-surface: var(--gsd-surface);
+  --color-gsd-surface-solid: var(--gsd-surface-solid);
+  --color-gsd-surface-hover: var(--gsd-surface-hover);
+  --color-gsd-border: var(--gsd-border);
+  --color-gsd-border-strong: var(--gsd-border-strong);
+  --color-gsd-text: var(--gsd-text);
+  --color-gsd-text-secondary: var(--gsd-text-secondary);
+  --color-gsd-text-dim: var(--gsd-text-dim);
+  --color-gsd-text-muted: var(--gsd-text-muted);
+  --color-gsd-accent: var(--gsd-accent);
+  --color-gsd-accent-hover: var(--gsd-accent-hover);
+  --color-gsd-accent-dim: var(--gsd-accent-dim);
+  --color-gsd-on-accent: var(--gsd-accent-fg);
+  --color-gsd-success: var(--gsd-success);
+  --color-gsd-warning: var(--gsd-warning);
+  --color-gsd-danger: var(--gsd-danger);
+}
+
+body {
+  margin: 0;
+  background: var(--gsd-bg);
+  color: var(--gsd-text);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+/* Subtle grid background like gsd.build */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(var(--gsd-grid-line) 1px, transparent 0),
+    linear-gradient(90deg, var(--gsd-grid-line) 1px, transparent 0);
+  background-size: 50px 50px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gsd-scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gsd-scrollbar-thumb-hover);
+}
+
+/* Form elements */
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  background: var(--gsd-surface);
+  border: 1px solid var(--gsd-border);
+  color: var(--gsd-text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.25;
+  height: 30px;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+  font-family: inherit;
+}
+
+textarea {
+  height: auto;
+}
+
+input[type="text"]:hover,
+input[type="number"]:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--gsd-border-strong);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--gsd-accent);
+  background: var(--gsd-surface-hover);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--gsd-text-muted);
+}
+
+/* Custom caret — reset native chrome so select height matches text inputs.
+ * The stroke color comes from --gsd-select-caret (URL-encoded `#`) so the
+ * caret flips between dark and light themes. */
+select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='none' stroke='%237dcfff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+}
+
+[data-theme="light"] select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='none' stroke='%230284c7' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/></svg>");
+}
+
+select option {
+  background: var(--gsd-surface-solid);
+  color: var(--gsd-text);
+}
+
+/* Brand glow on focus ring */
+.focus-ring:focus-visible {
+  box-shadow: 0 0 0 2px var(--gsd-bg), 0 0 0 4px var(--gsd-accent);
+}
+
+/* Invalid-field highlight — driven by `data-invalid` on the Field wrapper,
+ * which is set by the Field component when its registry validator returns an
+ * error. Any input/select/textarea descendant gets a danger-colored border. */
+[data-invalid] input[type="text"],
+[data-invalid] input[type="number"],
+[data-invalid] select,
+[data-invalid] textarea {
+  border-color: var(--gsd-danger);
+}
+[data-invalid] input[type="text"]:focus,
+[data-invalid] input[type="number"]:focus,
+[data-invalid] select:focus,
+[data-invalid] textarea:focus {
+  border-color: var(--gsd-danger);
+}

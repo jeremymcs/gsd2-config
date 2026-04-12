@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 80" width="192" height="80">
+  <defs>
+    <style>
+      .wordmark {
+        font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        fill: #7dcfff;
+      }
+      .badge {
+        font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+        font-weight: 700;
+        fill: #000000;
+      }
+      .bracket {
+        font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+        font-weight: 400;
+        fill: rgba(125, 207, 255, 0.45);
+      }
+    </style>
+  </defs>
+
+  <!-- Centered group: content spans 0→172, viewBox 192 → 10px padding on each side -->
+  <g transform="translate(10, 0)">
+    <!-- Left bracket -->
+    <text class="bracket" x="0" y="54" font-size="48" text-anchor="start">[</text>
+
+    <!-- GSD wordmark -->
+    <text class="wordmark" x="22" y="54" font-size="44">GSD</text>
+
+    <!-- Underscore cursor accent under GSD -->
+    <rect x="22" y="62" width="82" height="3" fill="rgba(125, 207, 255, 0.3)"/>
+
+    <!-- "2" badge — cyan square placed tight against GSD -->
+    <rect x="112" y="22" width="36" height="36" rx="6" fill="#7dcfff"/>
+    <text class="badge" x="130" y="50" font-size="28" text-anchor="middle">2</text>
+
+    <!-- Right bracket — anchored at end so its glyph sits tight against the badge -->
+    <text class="bracket" x="172" y="54" font-size="48" text-anchor="end">]</text>
+  </g>
+</svg>
