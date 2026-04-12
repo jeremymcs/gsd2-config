@@ -32,6 +32,7 @@ export function Field({ label, description, children, path, value }: FieldProps)
     <div
       className="flex items-start justify-between gap-4 py-3 border-b border-gsd-border last:border-b-0"
       data-invalid={error ? "" : undefined}
+      data-field-path={path}
     >
       <div className="flex-1 min-w-0">
         <label className="flex items-center gap-1.5 text-sm font-medium text-gsd-text">

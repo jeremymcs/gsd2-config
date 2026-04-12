@@ -70,6 +70,23 @@ fn export_preset(target_path: String, preferences: Value) -> Result<String, Stri
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Load preferences from an arbitrary `.preset.md` file. Mirrors `export_preset`
+/// — the frontend calls this when the user picks Import, then keeps the result
+/// in the dirty buffer so the user reviews before committing with Save.
+#[tauri::command]
+fn import_preset(source_path: String) -> Result<Value, String> {
+    if source_path.trim().is_empty() {
+        return Err("Source path is empty".to_string());
+    }
+    let path = PathBuf::from(&source_path);
+    if !path.exists() {
+        return Err(format!("Preset file does not exist: {}", source_path));
+    }
+    // load_preferences_at already handles frontmatter parsing + snowflake
+    // coercion, so a round-trip through export_preset/import_preset is safe.
+    load_preferences_at(&path)
+}
+
 /// Walk a JSON value and replace any string value whose key contains
 /// `key`/`token`/`secret`/`password` (case-insensitive) with `<redacted>`.
 /// Recurses through objects and arrays. Non-string values under sensitive
@@ -749,6 +766,38 @@ mod tests {
     }
 
     #[test]
+    fn export_import_preset_round_trip_preserves_snowflake_ids() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("gsd.preset.md");
+        let original = json!({
+            "mode": "solo",
+            "remote_questions": {
+                "channel_id": "1234567890123456789",
+                "channel": "discord"
+            },
+            "verification_commands": ["npm run build", "cargo test"],
+        });
+        export_preset(path.to_string_lossy().to_string(), original.clone())
+            .expect("export_preset");
+        let loaded = import_preset(path.to_string_lossy().to_string())
+            .expect("import_preset");
+        assert_eq!(loaded, original, "round-trip must preserve all values");
+        // Specifically: the snowflake must still be a string, not a truncated number.
+        assert_eq!(
+            loaded["remote_questions"]["channel_id"],
+            json!("1234567890123456789")
+        );
+    }
+
+    #[test]
+    fn import_preset_errors_on_missing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.preset.md");
+        let err = import_preset(path.to_string_lossy().to_string()).unwrap_err();
+        assert!(err.contains("does not exist"));
+    }
+
+    #[test]
     fn build_shareable_preset_emits_fenced_yaml_block() {
         let prefs = json!({ "mode": "solo", "api_key": "shouldnotleak" });
         let out = build_shareable_preset(prefs).expect("shareable build");
@@ -785,6 +834,7 @@ pub fn run() {
             save_preferences,
             get_preferences_path,
             export_preset,
+            import_preset,
             build_shareable_preset,
             list_skills,
             read_skill,

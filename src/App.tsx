@@ -42,7 +42,14 @@ const RECENT_PROJECTS_KEY = "gsd2-config.recent-projects";
 const LAST_SCOPE_KEY = "gsd2-config.last-scope";
 const LAST_PROJECT_KEY = "gsd2-config.last-project";
 
-/** Strip undefined/null values and empty objects recursively for clean YAML output */
+/**
+ * Strip undefined/null values and empty objects recursively for clean YAML output.
+ *
+ * Known limitation: empty arrays are pruned (a user clearing a list to `[]`
+ * loses the key on save). Intentional for now — users don't typically
+ * distinguish "unset" from "empty" for these fields. See
+ * .plans/qol-and-features-v1.md before changing.
+ */
 function cleanPrefs(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(obj)) {
@@ -81,8 +88,10 @@ export default function App() {
   const [prefs, setPrefs] = useState<GSDPreferences>({});
   const [originalPrefs, setOriginalPrefs] = useState<string>("{}");
   const [status, setStatus] = useState<SaveStatus>("idle");
+  const [savedCount, setSavedCount] = useState(0);
   const [filePath, setFilePath] = useState("");
   const [error, setError] = useState("");
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
 
   const [scope, setScope] = useState<Scope>(() => {
     const saved = localStorage.getItem(LAST_SCOPE_KEY);
@@ -122,7 +131,7 @@ export default function App() {
     }
   }, [scope, projectPath, load]);
 
-  const { isDirty, dirtySections } = useDirty(prefs, originalPrefs);
+  const { isDirty, dirtySections, dirtyPaths } = useDirty(prefs, originalPrefs);
 
   // Keep a ref to the latest isDirty so the Tauri close-requested handler,
   // captured once on mount, always sees the current value.
@@ -134,6 +143,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const save = async () => {
+    const count = dirtyPaths.length;
     setStatus("saving");
     try {
       const cleaned = cleanPrefs(prefs as unknown as Record<string, unknown>);
@@ -141,8 +151,12 @@ export default function App() {
       if (activeProjectPath) args.projectPath = activeProjectPath;
       await invoke("save_preferences", args);
       setOriginalPrefs(JSON.stringify(prefs));
+      setSavedCount(count);
       setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2000);
+      setTimeout(() => {
+        setStatus("idle");
+        setSavedCount(0);
+      }, 2000);
     } catch (e) {
       setError(String(e));
       setStatus("error");
@@ -155,6 +169,26 @@ export default function App() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [shareContent, setShareContent] = useState("");
+
+  const importPreset = async () => {
+    try {
+      setError("");
+      const picked = await open({
+        title: "Import preset",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "GSD Preset", extensions: ["preset.md", "md"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const loaded = await invoke<GSDPreferences>("import_preset", {
+        sourcePath: picked,
+      });
+      // Stay dirty on purpose — user reviews + clicks Save to commit.
+      setPrefs(loaded);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const exportPreset = async () => {
     try {
@@ -261,6 +295,27 @@ export default function App() {
     },
   ]);
 
+  // ⌘K → field focus: when the palette picks a field, scroll it into view and
+  // flash a ring on the row. The section must render first (pendingFocus is
+  // set alongside setSection), so we defer to the next frame before querying
+  // the DOM. data-field-path lives on the Field wrapper in FormControls.tsx.
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const path = pendingFocus;
+    const raf = requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-field-path="${CSS.escape(path)}"]`,
+      );
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("gsd-field-focus");
+        window.setTimeout(() => el.classList.remove("gsd-field-focus"), 1500);
+      }
+      setPendingFocus(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pendingFocus, section]);
+
   // Window close guard — prompt before closing with unsaved changes
   useCloseRequested(
     async (event) => {
@@ -356,7 +411,10 @@ export default function App() {
       <Palette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        onNavigate={(target) => setSection(target)}
+        onNavigate={(target, fieldPath) => {
+          setSection(target);
+          if (fieldPath) setPendingFocus(fieldPath);
+        }}
       />
       <ShareModal
         open={shareOpen}
@@ -411,7 +469,14 @@ export default function App() {
                   <select
                     value=""
                     onChange={(e) => {
-                      if (e.target.value) selectRecentProject(e.target.value);
+                      const v = e.target.value;
+                      if (!v) return;
+                      if (v === "__clear__") {
+                        setRecentProjects([]);
+                        saveRecentProjects([]);
+                        return;
+                      }
+                      selectRecentProject(v);
                     }}
                     className="text-xs max-w-40"
                   >
@@ -421,6 +486,8 @@ export default function App() {
                         {shortPath(p)}
                       </option>
                     ))}
+                    <option disabled>──────────</option>
+                    <option value="__clear__">Clear recent projects</option>
                   </select>
                 )}
               </div>
@@ -439,6 +506,14 @@ export default function App() {
             <div className="flex items-center gap-2 shrink-0">
               <ThemeToggle />
               <div className="w-px h-5 bg-gsd-border mx-1" />
+              <button
+                onClick={importPreset}
+                disabled={needsProjectSelection}
+                title="Load preferences from a .preset.md file (review and save to commit)"
+                className="px-3 py-1.5 text-xs rounded-md border border-gsd-border text-gsd-text-dim hover:text-gsd-text hover:bg-gsd-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Import
+              </button>
               <button
                 onClick={exportPreset}
                 disabled={needsProjectSelection}
@@ -473,7 +548,13 @@ export default function App() {
                     : "bg-gsd-border text-gsd-text-dim cursor-not-allowed"
                 }`}
               >
-                {status === "saving" ? "Saving..." : status === "saved" ? "Saved" : "Save"}
+                {status === "saving"
+                  ? "Saving..."
+                  : status === "saved"
+                  ? savedCount > 0
+                    ? `Saved ${savedCount} change${savedCount === 1 ? "" : "s"}`
+                    : "Saved"
+                  : "Save"}
               </button>
             </div>
           )}

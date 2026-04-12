@@ -224,3 +224,15 @@ select option {
 [data-invalid] textarea:focus {
   border-color: var(--gsd-danger);
 }
+
+/* ⌘K → field navigation: after the palette picks a field, App.tsx adds
+ * `gsd-field-focus` to the matching Field row so it flashes briefly. The
+ * ring is drawn via box-shadow so it doesn't reflow the layout. */
+@keyframes gsd-field-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  20%      { box-shadow: 0 0 0 3px var(--gsd-accent-dim); }
+}
+[data-field-path].gsd-field-focus {
+  animation: gsd-field-flash 1.5s ease-out;
+  border-radius: 6px;
+}
