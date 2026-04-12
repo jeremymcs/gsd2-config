@@ -1,0 +1,154 @@
+# GSD2 Config — cross-platform release workflow
+# Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+#
+# Security note: this workflow only interpolates `secrets.GITHUB_TOKEN`,
+# controlled `matrix.*` values defined in this file, and the release_id
+# output from our own create-release job. No untrusted event payload
+# (issue/PR/commit message bodies, head_ref, etc.) is interpolated into
+# any `run:` step, so workflow injection is not a concern.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test (Rust)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf \
+            build-essential \
+            curl wget file
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Run cargo test
+        working-directory: ./src-tauri
+        run: cargo test --locked
+
+  create-release:
+    name: Create draft release
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create draft GitHub release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `GSD2 Config ${tag}`,
+              body: [
+                '## GSD2 Config ' + tag,
+                '',
+                'Desktop configuration manager for GSD-2 preferences — Tauri + React GUI for `~/.gsd/preferences.md`, with skills, agents, and keychain-backed API keys.',
+                '',
+                '### Install',
+                '',
+                '- **macOS** — download the `.dmg` (universal binary, Apple Silicon + Intel). On first launch, right-click the app → **Open** to bypass Gatekeeper (the build is unsigned).',
+                '- **Windows** — download the `.msi` or `.exe`. SmartScreen may warn — click **More info → Run anyway** (the build is unsigned).',
+                '- **Linux** — download the `.AppImage` (portable) or `.deb` (Debian/Ubuntu).',
+                '',
+                '### Notes',
+                '',
+                '- Builds are not code-signed. Source is on this repo and CI is in `.github/workflows/release.yml`.',
+                '- Preferences live at `~/.gsd/preferences.md` (global) or `<project>/.gsd/preferences.md`.',
+                '- Keys are stored in the OS keychain via the `keyring` crate.',
+              ].join('\n'),
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+          result-encoding: string
+
+  build-tauri:
+    name: Build (${{ matrix.platform }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf \
+            build-essential \
+            curl wget file
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build & upload Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
