@@ -7,6 +7,13 @@ Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 Desktop configuration manager for [GSD-2](https://github.com/jmcspadden/gsd) preferences. A native Tauri app that gives you a structured GUI over the YAML preferences file you'd otherwise hand-edit, plus a library view for skills, agents, and API keys.
 
+## Screenshots
+
+| General | Models | API Keys & Auth |
+|---|---|---|
+| ![General settings](docs/screenshots/general.png) | ![Per-phase model chains with fallbacks](docs/screenshots/models.png) | ![Keychain-backed API keys and CLI auth](docs/screenshots/api-keys.png) |
+| Workflow mode, profiles, and global behavior toggles. | Per-phase model selection with ordered fallback chains. | Keychain-backed provider keys and CLI auth status. |
+
 ## What it does
 
 - **Edit preferences visually.** Every field in `.gsd/preferences.md` (or `~/.gsd/preferences.md`) is exposed across organized sections — models, git, hooks, parallel execution, safety, verification, routing, and more.
