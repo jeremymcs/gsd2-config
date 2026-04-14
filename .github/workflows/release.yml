@@ -159,7 +159,7 @@ jobs:
 
   publish-release:
     name: Publish release
-    needs: build-tauri
+    needs: [create-release, build-tauri]
     runs-on: ubuntu-latest
     steps:
       - name: Flip draft release to published
