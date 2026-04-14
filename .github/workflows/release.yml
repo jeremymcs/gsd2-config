@@ -84,7 +84,9 @@ jobs:
                 '',
                 '### Notes',
                 '',
-                '- Builds are not code-signed. Source is on this repo and CI is in `.github/workflows/release.yml`.',
+                '- Builds are not code-signed by Apple/Microsoft. Updater artifacts are signed with an ed25519 key whose public half is baked into the binary, so auto-updates verify cryptographically.',
+                '- **Upgrading from v1.0.0**: v1.0.0 shipped without the updater plugin. Install v1.1.0 manually once; future releases will offer in-app updates.',
+                '- Source is on this repo and CI is in `.github/workflows/release.yml`.',
                 '- Preferences live at `~/.gsd/preferences.md` (global) or `<project>/.gsd/preferences.md`.',
                 '- Keys are stored in the OS keychain via the `keyring` crate.',
               ].join('\n'),
@@ -149,6 +151,31 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish release
+    needs: build-tauri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Flip draft release to published
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            // Publish only after all artifacts (including updater latest.json
+            // and .sig files) have been uploaded. Until this step runs, the
+            // `releases/latest/download/latest.json` endpoint resolves to the
+            // previous release, which is exactly what we want: no half-built
+            // manifest ever gets served to the updater.
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            });

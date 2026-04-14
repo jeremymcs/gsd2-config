@@ -11,6 +11,11 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { useDirty } from "./hooks/useDirty";
 import { useShortcuts } from "./lib/keyboard";
 import { useCloseRequested } from "./lib/tauriListeners";
+import {
+  checkForUpdate,
+  downloadAndInstallUpdate,
+  type UpdateCheck,
+} from "./lib/updater";
 import type { GSDPreferences, GSDModelsConfig } from "./types";
 
 import { GeneralSection } from "./components/sections/GeneralSection";
@@ -116,6 +121,42 @@ export default function App() {
   const [settingsDoc, setSettingsDoc] = useState<Record<string, unknown>>({});
   const [originalSettings, setOriginalSettings] = useState<string>("{}");
   const [settingsMtime, setSettingsMtime] = useState<number>(0);
+
+  // Auto-update state. Silent check runs once on mount; banner appears only
+  // if an update is available and the user hasn't dismissed it this session.
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+
+  const runUpdateCheck = useCallback(async (manual: boolean) => {
+    setUpdateChecking(true);
+    try {
+      const result = await checkForUpdate();
+      setUpdateInfo(result);
+      if (manual) setUpdateDismissed(false);
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Silent check on mount — errors swallowed inside checkForUpdate().
+    runUpdateCheck(false);
+  }, [runUpdateCheck]);
+
+  const installUpdate = async () => {
+    if (!updateInfo?.handle) return;
+    setUpdateInstalling(true);
+    try {
+      await downloadAndInstallUpdate(updateInfo.handle);
+      // If relaunch() returns, something's off — leave the banner spinning
+      // so the user knows install finished but relaunch didn't fire.
+    } catch (e) {
+      setError(`Update failed: ${String(e)}`);
+      setUpdateInstalling(false);
+    }
+  };
 
   const activeProjectPath = scope === "project" ? projectPath : undefined;
 
@@ -645,6 +686,14 @@ export default function App() {
           {/* Save/Discard/Export/Share/Theme buttons (hidden on Skills Library which has its own per-file save) */}
           {!isSkillsLibrary && (
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => runUpdateCheck(true)}
+                disabled={updateChecking || updateInstalling}
+                title="Check for app updates"
+                className="px-3 py-1.5 text-xs rounded-md border border-gsd-border text-gsd-text-dim hover:text-gsd-text hover:bg-gsd-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {updateChecking ? "Checking..." : "Updates"}
+              </button>
               <ThemeToggle />
               <div className="w-px h-5 bg-gsd-border mx-1" />
               <button
@@ -700,6 +749,37 @@ export default function App() {
             </div>
           )}
         </header>
+
+        {/* Update banner — shown when a newer version is available and the
+            user hasn't dismissed it this session. Install is explicit; we
+            never auto-download. */}
+        {updateInfo?.available && !updateDismissed && (
+          <div className="px-6 py-2 bg-gsd-accent/10 border-b border-gsd-accent/30 text-xs flex items-center justify-between gap-3">
+            <span className="text-gsd-text">
+              {updateInstalling
+                ? `Installing v${updateInfo.version}… the app will relaunch when done.`
+                : `Update available: v${updateInfo.version}. Install now to relaunch with the new version.`}
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              {!updateInstalling && (
+                <>
+                  <button
+                    onClick={() => setUpdateDismissed(true)}
+                    className="px-2 py-1 rounded-md border border-gsd-border text-gsd-text-dim hover:text-gsd-text hover:bg-gsd-surface-hover"
+                  >
+                    Later
+                  </button>
+                  <button
+                    onClick={installUpdate}
+                    className="px-3 py-1 rounded-md bg-gsd-accent text-gsd-on-accent hover:bg-gsd-accent-hover font-medium"
+                  >
+                    Install &amp; restart
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Error banner */}
         {error && (
