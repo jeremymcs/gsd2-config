@@ -35,6 +35,7 @@ import { SkillsLibrarySection } from "./components/sections/SkillsLibrarySection
 import { AgentsLibrarySection } from "./components/sections/AgentsLibrarySection";
 import { ApiKeysSection } from "./components/sections/ApiKeysSection";
 import { CustomProvidersSection } from "./components/sections/CustomProvidersSection";
+import { AgentSettingsSection } from "./components/sections/AgentSettingsSection";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type Scope = "global" | "project";
@@ -110,6 +111,12 @@ export default function App() {
   const [originalModels, setOriginalModels] = useState<string>("{}");
   const [modelsMtime, setModelsMtime] = useState<number>(0);
 
+  // Third config document: ~/.gsd/agent/settings.json (Claude Code settings).
+  // Free-form Record so unknown keys (hooks, enterprise fields) round-trip.
+  const [settingsDoc, setSettingsDoc] = useState<Record<string, unknown>>({});
+  const [originalSettings, setOriginalSettings] = useState<string>("{}");
+  const [settingsMtime, setSettingsMtime] = useState<number>(0);
+
   const activeProjectPath = scope === "project" ? projectPath : undefined;
 
   const load = useCallback(async () => {
@@ -138,6 +145,22 @@ export default function App() {
         setOriginalModels("{}");
         setModelsMtime(0);
       }
+      // settings.json — third document, independent failure domain.
+      try {
+        const snap = await invoke<{
+          value: Record<string, unknown> | null;
+          mtime_ms: number;
+        }>("load_settings", args);
+        const next = snap.value ?? {};
+        setSettingsDoc(next);
+        setOriginalSettings(JSON.stringify(next));
+        setSettingsMtime(snap.mtime_ms ?? 0);
+      } catch (settingsErr) {
+        console.warn("load_settings failed:", settingsErr);
+        setSettingsDoc({});
+        setOriginalSettings("{}");
+        setSettingsMtime(0);
+      }
     } catch (e) {
       setError(String(e));
       setPrefs({});
@@ -145,6 +168,9 @@ export default function App() {
       setModelsDoc({});
       setOriginalModels("{}");
       setModelsMtime(0);
+      setSettingsDoc({});
+      setOriginalSettings("{}");
+      setSettingsMtime(0);
     }
   }, [activeProjectPath]);
 
@@ -167,7 +193,11 @@ export default function App() {
     () => JSON.stringify(modelsDoc) !== originalModels,
     [modelsDoc, originalModels],
   );
-  const anyDirty = isDirty || isModelsDirty;
+  const isSettingsDirty = useMemo(
+    () => JSON.stringify(settingsDoc) !== originalSettings,
+    [settingsDoc, originalSettings],
+  );
+  const anyDirty = isDirty || isModelsDirty || isSettingsDirty;
 
   // Keep a ref to the latest any-doc dirty flag so the Tauri close-requested
   // handler, captured once on mount, always sees the current value.
@@ -179,7 +209,8 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const save = async () => {
-    const count = dirtyPaths.length + (isModelsDirty ? 1 : 0);
+    const count =
+      dirtyPaths.length + (isModelsDirty ? 1 : 0) + (isSettingsDirty ? 1 : 0);
     setStatus("saving");
     setError("");
     const errs: string[] = [];
@@ -226,6 +257,34 @@ export default function App() {
       }
     }
 
+    // settings.json — independent failure domain. Raw round-trip: do NOT run
+    // through cleanPrefs (would prune empty permission arrays etc.).
+    if (isSettingsDirty) {
+      try {
+        const args: {
+          settings: unknown;
+          expectedMtimeMs: number | null;
+          projectPath?: string;
+        } = {
+          settings: settingsDoc,
+          expectedMtimeMs: settingsMtime > 0 ? settingsMtime : null,
+        };
+        if (activeProjectPath) args.projectPath = activeProjectPath;
+        const newMtime = await invoke<number>("save_settings", args);
+        setOriginalSettings(JSON.stringify(settingsDoc));
+        setSettingsMtime(newMtime);
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("STALE:")) {
+          errs.push(
+            "Agent settings: file was changed on disk by another process. Reload the app to pick up external changes, then retry your edits.",
+          );
+        } else {
+          errs.push(`Agent settings: ${msg}`);
+        }
+      }
+    }
+
     if (errs.length > 0) {
       setError(errs.join("\n"));
       setStatus("error");
@@ -242,6 +301,7 @@ export default function App() {
   const reset = () => {
     setPrefs(JSON.parse(originalPrefs));
     setModelsDoc(JSON.parse(originalModels));
+    setSettingsDoc(JSON.parse(originalSettings));
   };
 
   const [shareOpen, setShareOpen] = useState(false);
@@ -455,6 +515,8 @@ export default function App() {
       case "api-keys": return <ApiKeysSection />;
       case "custom-providers":
         return <CustomProvidersSection value={modelsDoc} onChange={setModelsDoc} />;
+      case "agent-settings":
+        return <AgentSettingsSection value={settingsDoc} onChange={setSettingsDoc} />;
       case "general": return <GeneralSection {...props} />;
       case "models": return <ModelsSection {...props} customModels={modelsDoc} />;
       case "git": return <GitSection {...props} />;

@@ -298,6 +298,46 @@ export interface JsonDocSnapshot<T> {
   mtimeMs: number;
 }
 
+export type ClaudeCodePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+  | "auto";
+
+export interface ClaudeCodePermissions {
+  defaultMode?: ClaudeCodePermissionMode;
+  allow?: string[];
+  deny?: string[];
+  ask?: string[];
+}
+
+export interface ClaudeCodeStatusLine {
+  type?: "command" | "static_text";
+  command?: string;
+  padding?: number;
+}
+
+/**
+ * Read-time lens over Claude Code's settings.json. The underlying state is
+ * a free-form `Record<string, unknown>` so unknown/experimental keys (hooks,
+ * enterprise fields, etc.) round-trip verbatim — cast to this interface only
+ * when reading a specific field.
+ */
+export interface ClaudeCodeSettings {
+  model?: string;
+  apiKeyHelper?: string;
+  env?: Record<string, string>;
+  permissions?: ClaudeCodePermissions;
+  statusLine?: ClaudeCodeStatusLine;
+  outputStyle?: string;
+  includeCoAuthoredBy?: boolean;
+  cleanupPeriodDays?: number;
+  verbose?: boolean;
+  autoUpdates?: boolean;
+  alwaysThinkingEnabled?: boolean;
+}
+
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice",

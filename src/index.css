@@ -1,8 +1,8 @@
 /* GSD2 Config - Global Styles (matches gsd.build theme) */
 /* Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net> */
 
-@import "tailwindcss";
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Theme tokens

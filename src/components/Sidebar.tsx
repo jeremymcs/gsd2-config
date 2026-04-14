@@ -11,6 +11,7 @@ export const SECTION_GROUPS = [
       { id: "models", label: "Models" },
       { id: "custom-providers", label: "Custom Providers" },
       { id: "api-keys", label: "API Keys & Auth" },
+      { id: "agent-settings", label: "Agent Settings" },
       { id: "git", label: "Git" },
     ],
   },
