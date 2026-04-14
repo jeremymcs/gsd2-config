@@ -9,6 +9,7 @@ export const SECTION_GROUPS = [
     items: [
       { id: "general", label: "General" },
       { id: "models", label: "Models" },
+      { id: "custom-providers", label: "Custom Providers" },
       { id: "api-keys", label: "API Keys & Auth" },
       { id: "git", label: "Git" },
     ],

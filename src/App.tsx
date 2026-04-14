@@ -1,7 +1,7 @@
 // GSD2 Config - Main Application Component
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Sidebar, SECTIONS, type SectionId } from "./components/Sidebar";
@@ -11,7 +11,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { useDirty } from "./hooks/useDirty";
 import { useShortcuts } from "./lib/keyboard";
 import { useCloseRequested } from "./lib/tauriListeners";
-import type { GSDPreferences } from "./types";
+import type { GSDPreferences, GSDModelsConfig } from "./types";
 
 import { GeneralSection } from "./components/sections/GeneralSection";
 import { ModelsSection } from "./components/sections/ModelsSection";
@@ -34,6 +34,7 @@ import { ExperimentalSection } from "./components/sections/ExperimentalSection";
 import { SkillsLibrarySection } from "./components/sections/SkillsLibrarySection";
 import { AgentsLibrarySection } from "./components/sections/AgentsLibrarySection";
 import { ApiKeysSection } from "./components/sections/ApiKeysSection";
+import { CustomProvidersSection } from "./components/sections/CustomProvidersSection";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type Scope = "global" | "project";
@@ -102,6 +103,13 @@ export default function App() {
   });
   const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
 
+  // Second config document: ~/.gsd/agent/models.json (or project equivalent).
+  // Tracked independently of preferences.md — same dirty/save flow, its own
+  // mtime baseline for cross-process staleness detection.
+  const [modelsDoc, setModelsDoc] = useState<GSDModelsConfig>({});
+  const [originalModels, setOriginalModels] = useState<string>("{}");
+  const [modelsMtime, setModelsMtime] = useState<number>(0);
+
   const activeProjectPath = scope === "project" ? projectPath : undefined;
 
   const load = useCallback(async () => {
@@ -113,10 +121,30 @@ export default function App() {
       setOriginalPrefs(JSON.stringify(data));
       const path = await invoke<string>("get_preferences_path", args);
       setFilePath(path);
+      // models.json — second document, independent failure domain. A missing
+      // or malformed file should not block preferences editing.
+      try {
+        const snap = await invoke<{ value: GSDModelsConfig | null; mtime_ms: number }>(
+          "load_models",
+          args,
+        );
+        const next = snap.value ?? {};
+        setModelsDoc(next);
+        setOriginalModels(JSON.stringify(next));
+        setModelsMtime(snap.mtime_ms ?? 0);
+      } catch (modelsErr) {
+        console.warn("load_models failed:", modelsErr);
+        setModelsDoc({});
+        setOriginalModels("{}");
+        setModelsMtime(0);
+      }
     } catch (e) {
       setError(String(e));
       setPrefs({});
       setOriginalPrefs("{}");
+      setModelsDoc({});
+      setOriginalModels("{}");
+      setModelsMtime(0);
     }
   }, [activeProjectPath]);
 
@@ -133,38 +161,87 @@ export default function App() {
 
   const { isDirty, dirtySections, dirtyPaths } = useDirty(prefs, originalPrefs);
 
-  // Keep a ref to the latest isDirty so the Tauri close-requested handler,
-  // captured once on mount, always sees the current value.
-  const isDirtyRef = useRef(isDirty);
+  // models.json dirty check — simple JSON-string compare since the doc is a
+  // free-form registry shape and field-level paths don't make sense here.
+  const isModelsDirty = useMemo(
+    () => JSON.stringify(modelsDoc) !== originalModels,
+    [modelsDoc, originalModels],
+  );
+  const anyDirty = isDirty || isModelsDirty;
+
+  // Keep a ref to the latest any-doc dirty flag so the Tauri close-requested
+  // handler, captured once on mount, always sees the current value.
+  const isDirtyRef = useRef(anyDirty);
   useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
+    isDirtyRef.current = anyDirty;
+  }, [anyDirty]);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const save = async () => {
-    const count = dirtyPaths.length;
+    const count = dirtyPaths.length + (isModelsDirty ? 1 : 0);
     setStatus("saving");
-    try {
-      const cleaned = cleanPrefs(prefs as unknown as Record<string, unknown>);
-      const args: { preferences: unknown; projectPath?: string } = { preferences: cleaned };
-      if (activeProjectPath) args.projectPath = activeProjectPath;
-      await invoke("save_preferences", args);
-      setOriginalPrefs(JSON.stringify(prefs));
+    setError("");
+    const errs: string[] = [];
+
+    // Preferences — independent failure domain. On failure, leave prefs
+    // dirty so the user can retry without losing in-progress edits.
+    if (isDirty) {
+      try {
+        const cleaned = cleanPrefs(prefs as unknown as Record<string, unknown>);
+        const args: { preferences: unknown; projectPath?: string } = { preferences: cleaned };
+        if (activeProjectPath) args.projectPath = activeProjectPath;
+        await invoke("save_preferences", args);
+        setOriginalPrefs(JSON.stringify(prefs));
+      } catch (e) {
+        errs.push(`Preferences: ${String(e)}`);
+      }
+    }
+
+    // models.json — independent. Pass expected_mtime_ms so GSD2 writing to
+    // this file concurrently gets caught (backend returns STALE: prefix).
+    if (isModelsDirty) {
+      try {
+        const args: {
+          models: unknown;
+          expectedMtimeMs: number | null;
+          projectPath?: string;
+        } = {
+          models: modelsDoc,
+          expectedMtimeMs: modelsMtime > 0 ? modelsMtime : null,
+        };
+        if (activeProjectPath) args.projectPath = activeProjectPath;
+        const newMtime = await invoke<number>("save_models", args);
+        setOriginalModels(JSON.stringify(modelsDoc));
+        setModelsMtime(newMtime);
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("STALE:")) {
+          errs.push(
+            "Custom providers: file was changed on disk by GSD2. Reload the app to pick up external changes, then retry your edits.",
+          );
+        } else {
+          errs.push(`Custom providers: ${msg}`);
+        }
+      }
+    }
+
+    if (errs.length > 0) {
+      setError(errs.join("\n"));
+      setStatus("error");
+    } else {
       setSavedCount(count);
       setStatus("saved");
       setTimeout(() => {
         setStatus("idle");
         setSavedCount(0);
       }, 2000);
-    } catch (e) {
-      setError(String(e));
-      setStatus("error");
     }
   };
 
   const reset = () => {
     setPrefs(JSON.parse(originalPrefs));
+    setModelsDoc(JSON.parse(originalModels));
   };
 
   const [shareOpen, setShareOpen] = useState(false);
@@ -348,7 +425,7 @@ export default function App() {
   };
 
   const selectScope = (s: Scope) => {
-    if (isDirty) {
+    if (anyDirty) {
       const ok = confirm("You have unsaved changes. Discard them and switch scope?");
       if (!ok) return;
     }
@@ -357,7 +434,7 @@ export default function App() {
   };
 
   const selectRecentProject = (path: string) => {
-    if (isDirty) {
+    if (anyDirty) {
       const ok = confirm("You have unsaved changes. Discard them and switch project?");
       if (!ok) return;
     }
@@ -376,8 +453,10 @@ export default function App() {
       case "skills-library": return <SkillsLibrarySection projectPath={projectPath || undefined} />;
       case "agents-library": return <AgentsLibrarySection projectPath={projectPath || undefined} />;
       case "api-keys": return <ApiKeysSection />;
+      case "custom-providers":
+        return <CustomProvidersSection value={modelsDoc} onChange={setModelsDoc} />;
       case "general": return <GeneralSection {...props} />;
-      case "models": return <ModelsSection {...props} />;
+      case "models": return <ModelsSection {...props} customModels={modelsDoc} />;
       case "git": return <GitSection {...props} />;
       case "skills": return <SkillsSection {...props} />;
       case "budget": return <BudgetSection {...props} />;
@@ -531,7 +610,7 @@ export default function App() {
                 Share
               </button>
               <div className="w-px h-5 bg-gsd-border mx-1" />
-              {isDirty && (
+              {anyDirty && (
                 <button
                   onClick={reset}
                   className="px-3 py-1.5 text-xs rounded-md border border-gsd-border text-gsd-text-dim hover:text-gsd-text hover:bg-gsd-surface-hover transition-colors"
@@ -541,9 +620,9 @@ export default function App() {
               )}
               <button
                 onClick={save}
-                disabled={!isDirty || status === "saving" || needsProjectSelection}
+                disabled={!anyDirty || status === "saving" || needsProjectSelection}
                 className={`px-4 py-1.5 text-xs rounded-md font-medium transition-colors ${
-                  isDirty && !needsProjectSelection
+                  anyDirty && !needsProjectSelection
                     ? "bg-gsd-accent text-gsd-on-accent hover:bg-gsd-accent-hover"
                     : "bg-gsd-border text-gsd-text-dim cursor-not-allowed"
                 }`}

@@ -1,14 +1,22 @@
 // GSD2 Config - Models Settings Section
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
-import type { GSDPreferences, GSDModelConfig, GSDPhaseModelConfig } from "../../types";
+import type {
+  GSDPreferences,
+  GSDModelConfig,
+  GSDPhaseModelConfig,
+  GSDModelsConfig,
+} from "../../types";
 import { MODEL_PHASES } from "../../types";
 import { Field, ModelChain, SectionHeader } from "../FormControls";
 import { MODEL_CATALOG } from "../../constants";
+import { mergeCustomProviders } from "../../lib/customProviders";
 
 interface Props {
   prefs: GSDPreferences;
   onChange: (prefs: GSDPreferences) => void;
+  /** Custom providers loaded from models.json — merged into dropdown catalog. */
+  customModels?: GSDModelsConfig;
 }
 
 type PhaseKey = (typeof MODEL_PHASES)[number];
@@ -32,21 +40,24 @@ function getChain(val: string | GSDPhaseModelConfig | undefined): string[] {
   return [primary, ...(val.fallbacks ?? [])];
 }
 
-/** Parse a qualified string into `{provider, model}`, matching against known providers. */
-function parseQualified(v: string): { provider?: string; model: string } {
+/** Parse a qualified string into `{provider, model}`, matching against a provided catalog. */
+function parseQualified(
+  v: string,
+  catalog: readonly { id: string }[],
+): { provider?: string; model: string } {
   const slash = v.indexOf("/");
   if (slash === -1) return { model: v };
   const prefix = v.slice(0, slash);
   const rest = v.slice(slash + 1);
-  // Only treat as provider if it matches a known catalog entry
-  if (MODEL_CATALOG.some((p) => p.id === prefix)) {
+  if (catalog.some((p) => p.id === prefix)) {
     return { provider: prefix, model: rest };
   }
   return { model: v };
 }
 
-export function ModelsSection({ prefs, onChange }: Props) {
+export function ModelsSection({ prefs, onChange, customModels }: Props) {
   const models = (prefs.models ?? {}) as GSDModelConfig;
+  const { catalog: mergedCatalog } = mergeCustomProviders(MODEL_CATALOG, customModels);
 
   /** Write phase config from an ordered chain: [0] = primary, [1..] = fallbacks. */
   const setPhase = (phase: PhaseKey, chain: string[]) => {
@@ -57,7 +68,7 @@ export function ModelsSection({ prefs, onChange }: Props) {
       next = undefined;
     } else {
       const [primary, ...fb] = cleaned;
-      const { provider, model } = parseQualified(primary);
+      const { provider, model } = parseQualified(primary, mergedCatalog);
       if (provider || fb.length > 0) {
         next = {
           model,
@@ -95,7 +106,7 @@ export function ModelsSection({ prefs, onChange }: Props) {
               <ModelChain
                 chain={chain}
                 onChange={(next) => setPhase(phase, next)}
-                catalog={MODEL_CATALOG}
+                catalog={mergedCatalog}
                 className="w-64"
               />
             </Field>

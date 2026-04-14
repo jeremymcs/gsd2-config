@@ -248,6 +248,56 @@ export interface GSDPreferences {
   discuss_depth?: DiscussDepth;
 }
 
+// ─── Custom providers / models (~/.gsd/agent/models.json) ───────────────────
+// Mirrors the subset of GSD2's ProviderConfig / ModelDefinition that the
+// editor currently exposes. Unknown fields (headers, authHeader, cost,
+// compat, modelOverrides) are preserved by the backend round-trip; we just
+// don't render form controls for them yet.
+
+export type ModelInputKind = "text" | "image";
+
+export interface ModelCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+export interface CustomModelDefinition {
+  id: string;
+  name?: string;
+  api?: string;
+  baseUrl?: string;
+  reasoning?: boolean;
+  input?: ModelInputKind[];
+  cost?: ModelCost;
+  contextWindow?: number;
+  maxTokens?: number;
+  // Preserved but not edited:
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+}
+
+export interface CustomProviderConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  api?: string;
+  authHeader?: boolean;
+  headers?: Record<string, string>;
+  models?: CustomModelDefinition[];
+  modelOverrides?: Record<string, Partial<CustomModelDefinition>>;
+}
+
+export interface GSDModelsConfig {
+  providers?: Record<string, CustomProviderConfig>;
+}
+
+/** Snapshot returned by `load_models` / `load_settings` — value + file mtime. */
+export interface JsonDocSnapshot<T> {
+  value: T;
+  mtimeMs: number;
+}
+
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice",
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice",
