@@ -10,8 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::{
-    load_preferences_at, normalize_stringy_ids, parse_frontmatter, preferences_path,
-    read_frontmatter_field, save_preferences_at, serialize_preferences, write_atomic,
+    config_path, load_json_at, load_preferences_at, normalize_stringy_ids, parse_frontmatter,
+    preferences_path, read_frontmatter_field, save_json_at, save_preferences_at,
+    serialize_preferences, write_atomic, ConfigDoc, JsonDoc,
 };
 
 const KEYRING_SERVICE: &str = "net.fluxlabs.gsd2-config";
@@ -43,6 +44,60 @@ fn save_preferences(preferences: Value, project_path: Option<String>) -> Result<
 #[tauri::command]
 fn get_preferences_path(project_path: Option<String>) -> Result<String, String> {
     Ok(preferences_path(project_path.as_deref())?
+        .to_string_lossy()
+        .to_string())
+}
+
+// ─── Settings / Models commands ─────────────────────────────────────────────
+//
+// GSD2 reads three independent config files: preferences.md (above),
+// settings.json (agent runtime), and models.json (custom providers). Settings
+// and models are plain JSON and share the same load/save machinery in
+// `core::{load_json_at, save_json_at}`. Each returns a JsonDoc (value + mtime)
+// so the frontend can round-trip the mtime on save and detect external edits.
+
+#[tauri::command]
+fn load_settings(project_path: Option<String>) -> Result<JsonDoc, String> {
+    let path = config_path(ConfigDoc::Settings, project_path.as_deref())?;
+    load_json_at(&path)
+}
+
+#[tauri::command]
+fn save_settings(
+    settings: Value,
+    expected_mtime_ms: Option<i64>,
+    project_path: Option<String>,
+) -> Result<i64, String> {
+    let path = config_path(ConfigDoc::Settings, project_path.as_deref())?;
+    save_json_at(&path, &settings, expected_mtime_ms)
+}
+
+#[tauri::command]
+fn get_settings_path(project_path: Option<String>) -> Result<String, String> {
+    Ok(config_path(ConfigDoc::Settings, project_path.as_deref())?
+        .to_string_lossy()
+        .to_string())
+}
+
+#[tauri::command]
+fn load_models(project_path: Option<String>) -> Result<JsonDoc, String> {
+    let path = config_path(ConfigDoc::Models, project_path.as_deref())?;
+    load_json_at(&path)
+}
+
+#[tauri::command]
+fn save_models(
+    models: Value,
+    expected_mtime_ms: Option<i64>,
+    project_path: Option<String>,
+) -> Result<i64, String> {
+    let path = config_path(ConfigDoc::Models, project_path.as_deref())?;
+    save_json_at(&path, &models, expected_mtime_ms)
+}
+
+#[tauri::command]
+fn get_models_path(project_path: Option<String>) -> Result<String, String> {
+    Ok(config_path(ConfigDoc::Models, project_path.as_deref())?
         .to_string_lossy()
         .to_string())
 }
@@ -833,6 +888,12 @@ pub fn run() {
             load_preferences,
             save_preferences,
             get_preferences_path,
+            load_settings,
+            save_settings,
+            get_settings_path,
+            load_models,
+            save_models,
+            get_models_path,
             export_preset,
             import_preset,
             build_shareable_preset,

@@ -4,12 +4,14 @@
 // Pure (non-Tauri) logic that both the GUI command layer and the future
 // `gsd-setup-cli` binary depend on. Kept free of tauri types on purpose.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 // ─── Per-file mutex registry ────────────────────────────────────────────────
 //
@@ -208,6 +210,141 @@ pub fn save_preferences_at(path: &Path, prefs: &Value) -> Result<(), String> {
         normalize_stringy_ids(&mut normalized);
         let output = serialize_preferences(&normalized)?;
         write_atomic(path, output.as_bytes())
+    })
+}
+
+// ─── Generic JSON document load/save ────────────────────────────────────────
+//
+// settings.json and models.json are plain JSON (not YAML frontmatter), but
+// they share the same safety needs as preferences.md: atomic write, per-path
+// mutex, `.bak` sibling, and protection against silently clobbering edits
+// made by GSD2 itself while the editor was open.
+//
+// Cross-process safety: `with_file_lock` only guards in-process races. GSD2
+// can write to these files too, so we compare the on-disk mtime to an
+// `expected_mtime_ms` captured at load time and refuse the save on mismatch
+// with a `STALE:` prefix the UI can detect.
+
+#[derive(Debug, Clone, Copy)]
+pub enum ConfigDoc {
+    Preferences,
+    Settings,
+    Models,
+}
+
+/// Typed resolver for every config file the editor touches.
+///
+/// Path asymmetry is intentional and matches what GSD2 actually reads:
+///   - project settings.json lives at `<p>/.gsd/settings.json`
+///   - project models.json lives at `<p>/.gsd/agent/models.json`
+/// Centralising the table here keeps the asymmetry explicit and testable.
+pub fn config_path(doc: ConfigDoc, project_path: Option<&str>) -> Result<PathBuf, String> {
+    let home = || dirs::home_dir().ok_or_else(|| "could not resolve home directory".to_string());
+    let project_base = |p: &str| -> Result<PathBuf, String> {
+        let base = PathBuf::from(p);
+        if !base.exists() {
+            return Err(format!("Project folder does not exist: {}", p));
+        }
+        Ok(base)
+    };
+    match (doc, project_path) {
+        (ConfigDoc::Preferences, Some(p)) if !p.is_empty() => {
+            Ok(project_base(p)?.join(".gsd").join("preferences.md"))
+        }
+        (ConfigDoc::Preferences, _) => Ok(home()?.join(".gsd").join("preferences.md")),
+        (ConfigDoc::Settings, Some(p)) if !p.is_empty() => {
+            Ok(project_base(p)?.join(".gsd").join("settings.json"))
+        }
+        (ConfigDoc::Settings, _) => Ok(home()?.join(".gsd").join("agent").join("settings.json")),
+        (ConfigDoc::Models, Some(p)) if !p.is_empty() => {
+            Ok(project_base(p)?
+                .join(".gsd")
+                .join("agent")
+                .join("models.json"))
+        }
+        (ConfigDoc::Models, _) => Ok(home()?.join(".gsd").join("agent").join("models.json")),
+    }
+}
+
+/// A parsed JSON document plus the mtime it was loaded with, so the caller
+/// can pass the mtime back on save and we can detect external edits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonDoc {
+    pub value: Value,
+    /// Milliseconds since UNIX epoch. `0` when the file did not exist at load time.
+    pub mtime_ms: i64,
+}
+
+fn file_mtime_ms(path: &Path) -> Result<i64, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("Failed to stat file: {}", e))?;
+    let mtime = meta
+        .modified()
+        .map_err(|e| format!("Failed to read mtime: {}", e))?;
+    let dur = mtime
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("Invalid mtime: {}", e))?;
+    Ok(dur.as_millis() as i64)
+}
+
+/// Produce a backup sibling by appending `.bak` to the full filename so we
+/// never double an extension (`settings.json` → `settings.json.bak`, not
+/// `settings.json.json.bak` that `with_extension` would give for some inputs).
+fn backup_sibling(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(".bak");
+    PathBuf::from(s)
+}
+
+/// Read a JSON file into a `JsonDoc`. Missing file → empty object + `mtime_ms: 0`.
+pub fn load_json_at(path: &Path) -> Result<JsonDoc, String> {
+    if !path.exists() {
+        return Ok(JsonDoc {
+            value: Value::Object(serde_json::Map::new()),
+            mtime_ms: 0,
+        });
+    }
+    let content = fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let value: Value = if content.trim().is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(&content).map_err(|e| format!("JSON parse error: {}", e))?
+    };
+    let mtime_ms = file_mtime_ms(path)?;
+    Ok(JsonDoc { value, mtime_ms })
+}
+
+/// Write `value` to `path` as pretty JSON. If `expected_mtime_ms` is `Some`
+/// and the file already exists, the on-disk mtime must match or the save is
+/// refused with a `STALE:`-prefixed error. Returns the new mtime so the
+/// caller can update its baseline.
+pub fn save_json_at(
+    path: &Path,
+    value: &Value,
+    expected_mtime_ms: Option<i64>,
+) -> Result<i64, String> {
+    with_file_lock(path, || {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+        if path.exists() {
+            if let Some(expected) = expected_mtime_ms {
+                let actual = file_mtime_ms(path)?;
+                if actual != expected {
+                    return Err(format!(
+                        "STALE: file changed on disk since last load (expected mtime {}, found {})",
+                        expected, actual
+                    ));
+                }
+            }
+            let backup = backup_sibling(path);
+            fs::copy(path, &backup).ok();
+        }
+        let mut serialized =
+            serde_json::to_vec_pretty(value).map_err(|e| format!("JSON serialize error: {}", e))?;
+        serialized.push(b'\n');
+        write_atomic(path, &serialized)?;
+        file_mtime_ms(path)
     })
 }
 
@@ -414,6 +551,119 @@ mod tests {
     /// On save, even if the frontend sent a number (defense in depth), the
     /// written file must store the channel_id as a quoted string so the next
     /// reload doesn't reintroduce the precision bug.
+    #[test]
+    fn json_round_trip_preserves_arbitrary_shape() {
+        // Unknown/future fields must survive a load→save round-trip untouched.
+        // This is the backend guarantee that front-end edits merged on top of
+        // the loaded Value won't silently drop fields the UI doesn't know about.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.json");
+        let original = json!({
+            "theme": "dark",
+            "shellPath": "/bin/zsh",
+            "unknownFutureKey": { "nested": [1, 2, 3], "flag": true },
+            "fallback": ["a", "b"],
+        });
+        save_json_at(&path, &original, None).unwrap();
+        let loaded = load_json_at(&path).unwrap();
+        assert_eq!(loaded.value, original);
+        assert!(loaded.mtime_ms > 0);
+    }
+
+    #[test]
+    fn json_save_creates_bak_sibling_with_single_suffix() {
+        // Backup must be `settings.json.bak`, never `settings.json.json.bak`.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("settings.json");
+        save_json_at(&path, &json!({ "v": 1 }), None).unwrap();
+        save_json_at(&path, &json!({ "v": 2 }), None).unwrap();
+        let bak = tmp.path().join("settings.json.bak");
+        assert!(bak.exists(), "backup must exist at settings.json.bak");
+        assert!(
+            !tmp.path().join("settings.json.json.bak").exists(),
+            "must not produce doubled-extension backup"
+        );
+        let bak_content = fs::read_to_string(&bak).unwrap();
+        assert!(bak_content.contains("\"v\": 1"));
+    }
+
+    #[test]
+    fn json_save_detects_stale_mtime() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("models.json");
+        save_json_at(&path, &json!({ "providers": {} }), None).unwrap();
+        let doc = load_json_at(&path).unwrap();
+        // Simulate GSD2 writing to the file externally.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&path, b"{\"providers\":{\"ext\":{}}}").unwrap();
+        let err = save_json_at(&path, &json!({ "providers": { "ours": {} } }), Some(doc.mtime_ms))
+            .unwrap_err();
+        assert!(
+            err.starts_with("STALE:"),
+            "expected STALE: error prefix, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn json_save_without_expected_mtime_skips_staleness_check() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("models.json");
+        save_json_at(&path, &json!({ "v": 1 }), None).unwrap();
+        fs::write(&path, b"{\"v\":99}").unwrap();
+        save_json_at(&path, &json!({ "v": 2 }), None).expect("no mtime → no staleness check");
+        let loaded = load_json_at(&path).unwrap();
+        assert_eq!(loaded.value, json!({ "v": 2 }));
+    }
+
+    #[test]
+    fn load_json_missing_file_returns_empty_object_and_zero_mtime() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.json");
+        let doc = load_json_at(&path).unwrap();
+        assert_eq!(doc.value, json!({}));
+        assert_eq!(doc.mtime_ms, 0);
+    }
+
+    #[test]
+    fn config_path_resolves_global_variants() {
+        let global_prefs = config_path(ConfigDoc::Preferences, None).unwrap();
+        assert!(global_prefs.ends_with(".gsd/preferences.md"));
+        let global_settings = config_path(ConfigDoc::Settings, None).unwrap();
+        assert!(global_settings.ends_with(".gsd/agent/settings.json"));
+        let global_models = config_path(ConfigDoc::Models, None).unwrap();
+        assert!(global_models.ends_with(".gsd/agent/models.json"));
+    }
+
+    #[test]
+    fn config_path_resolves_project_variants_with_asymmetry() {
+        let tmp = TempDir::new().unwrap();
+        let proj = tmp.path().to_string_lossy().to_string();
+
+        let prefs = config_path(ConfigDoc::Preferences, Some(&proj)).unwrap();
+        assert!(prefs.ends_with(".gsd/preferences.md"));
+
+        // Project settings.json lives at .gsd/settings.json (NOT .gsd/agent/)
+        let settings = config_path(ConfigDoc::Settings, Some(&proj)).unwrap();
+        assert!(
+            settings.ends_with(".gsd/settings.json"),
+            "project settings.json must be at .gsd/settings.json, got {:?}",
+            settings
+        );
+        assert!(!settings.to_string_lossy().contains("/agent/"));
+
+        // Project models.json lives at .gsd/agent/models.json
+        let models = config_path(ConfigDoc::Models, Some(&proj)).unwrap();
+        assert!(models.ends_with(".gsd/agent/models.json"));
+    }
+
+    #[test]
+    fn config_path_errors_on_missing_project() {
+        let err = config_path(ConfigDoc::Settings, Some("/definitely/not/a/real/path/xyz"))
+            .unwrap_err();
+        assert!(err.contains("does not exist"));
+    }
+
     #[test]
     fn save_normalizes_numeric_channel_id_to_string() {
         let tmp = TempDir::new().unwrap();
