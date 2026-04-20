@@ -11,6 +11,9 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { useDirty } from "./hooks/useDirty";
 import { useShortcuts } from "./lib/keyboard";
 import { useCloseRequested } from "./lib/tauriListeners";
+import { usePersistentWebviewZoom } from "./lib/zoom";
+import { MODEL_CATALOG, type ProviderCatalog } from "./constants";
+import { mergeCustomProviders } from "./lib/customProviders";
 import {
   checkForUpdate,
   downloadAndInstallUpdate,
@@ -48,6 +51,7 @@ type Scope = "global" | "project";
 const RECENT_PROJECTS_KEY = "gsd2-config.recent-projects";
 const LAST_SCOPE_KEY = "gsd2-config.last-scope";
 const LAST_PROJECT_KEY = "gsd2-config.last-project";
+const CUSTOM_MODELS_ONLY_KEY = "gsd2-config.custom-models-only";
 
 /**
  * Strip undefined/null values and empty objects recursively for clean YAML output.
@@ -91,6 +95,8 @@ function saveRecentProjects(projects: string[]) {
 }
 
 export default function App() {
+  usePersistentWebviewZoom();
+
   const [section, setSection] = useState<SectionId>("general");
   const [prefs, setPrefs] = useState<GSDPreferences>({});
   const [originalPrefs, setOriginalPrefs] = useState<string>("{}");
@@ -110,11 +116,22 @@ export default function App() {
   const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
 
   // Second config document: ~/.gsd/agent/models.json (or project equivalent).
-  // Tracked independently of preferences.md — same dirty/save flow, its own
+  // Tracked independently of PREFERENCES.md — same dirty/save flow, its own
   // mtime baseline for cross-process staleness detection.
   const [modelsDoc, setModelsDoc] = useState<GSDModelsConfig>({});
   const [originalModels, setOriginalModels] = useState<string>("{}");
   const [modelsMtime, setModelsMtime] = useState<number>(0);
+  const [customModelsOnly, setCustomModelsOnlyState] = useState<boolean>(() => {
+    return localStorage.getItem(CUSTOM_MODELS_ONLY_KEY) === "true";
+  });
+  const setCustomModelsOnly = useCallback((next: boolean) => {
+    setCustomModelsOnlyState(next);
+    localStorage.setItem(CUSTOM_MODELS_ONLY_KEY, String(next));
+  }, []);
+  const modelCatalog: readonly ProviderCatalog[] = useMemo(
+    () => mergeCustomProviders(MODEL_CATALOG, modelsDoc, { customOnly: customModelsOnly }).catalog,
+    [modelsDoc, customModelsOnly],
+  );
 
   // Third config document: ~/.gsd/agent/settings.json (Claude Code settings).
   // Free-form Record so unknown keys (hooks, enterprise fields) round-trip.
@@ -497,9 +514,12 @@ export default function App() {
   // Window close guard — prompt before closing with unsaved changes
   useCloseRequested(
     async (event) => {
-      if (!isDirtyRef.current) return;
-      const ok = confirm("You have unsaved changes. Close anyway?");
-      if (!ok) event.preventDefault();
+      event.preventDefault();
+      if (isDirtyRef.current) {
+        const ok = confirm("You have unsaved changes. Close anyway?");
+        if (!ok) return;
+      }
+      await invoke("close_window");
     },
     [],
   );
@@ -555,27 +575,34 @@ export default function App() {
       case "agents-library": return <AgentsLibrarySection projectPath={projectPath || undefined} />;
       case "api-keys": return <ApiKeysSection />;
       case "custom-providers":
-        return <CustomProvidersSection value={modelsDoc} onChange={setModelsDoc} />;
+        return (
+          <CustomProvidersSection
+            value={modelsDoc}
+            onChange={setModelsDoc}
+            customModelsOnly={customModelsOnly}
+            onCustomModelsOnlyChange={setCustomModelsOnly}
+          />
+        );
       case "agent-settings":
         return <AgentSettingsSection value={settingsDoc} onChange={setSettingsDoc} />;
       case "general": return <GeneralSection {...props} />;
-      case "models": return <ModelsSection {...props} customModels={modelsDoc} />;
+      case "models": return <ModelsSection {...props} catalog={modelCatalog} />;
       case "git": return <GitSection {...props} />;
       case "skills": return <SkillsSection {...props} />;
       case "budget": return <BudgetSection {...props} />;
       case "notifications": return <NotificationsSection {...props} />;
-      case "parallel": return <ParallelSection {...props} />;
+      case "parallel": return <ParallelSection {...props} catalog={modelCatalog} />;
       case "phases": return <PhasesSection {...props} />;
       case "context": return <ContextSection {...props} />;
       case "safety": return <SafetySection {...props} />;
       case "verification": return <VerificationSection {...props} />;
       case "discussion": return <DiscussionSection {...props} />;
       case "hooks": return <HooksSection {...props} />;
-      case "routing": return <RoutingSection {...props} />;
+      case "routing": return <RoutingSection {...props} catalog={modelCatalog} />;
       case "cmux": return <CmuxSection {...props} />;
       case "remote": return <RemoteSection {...props} />;
       case "codebase": return <CodebaseSection {...props} />;
-      case "experimental": return <ExperimentalSection {...props} />;
+      case "experimental": return <ExperimentalSection {...props} catalog={modelCatalog} />;
     }
   };
 
@@ -802,7 +829,7 @@ export default function App() {
               <div className="text-4xl mb-3">📁</div>
               <h2 className="text-lg font-semibold text-gsd-text mb-2">No project selected</h2>
               <p className="text-sm text-gsd-text-dim mb-4 max-w-md">
-                Browse to a project folder to edit its <code className="text-xs bg-gsd-surface px-1.5 py-0.5 rounded">.gsd/preferences.md</code> file.
+                Browse to a project folder to edit its <code className="text-xs bg-gsd-surface px-1.5 py-0.5 rounded">.gsd/PREFERENCES.md</code> file.
               </p>
               <button
                 onClick={browseProject}

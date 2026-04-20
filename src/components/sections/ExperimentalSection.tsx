@@ -3,14 +3,15 @@
 
 import type { GSDPreferences, ReactiveExecutionConfig, GateEvaluationConfig } from "../../types";
 import { Field, Toggle, NumberField, ModelPicker, TagInput, SectionHeader } from "../FormControls";
-import { MODEL_CATALOG } from "../../constants";
+import type { ProviderCatalog } from "../../constants";
 
 interface Props {
   prefs: GSDPreferences;
   onChange: (prefs: GSDPreferences) => void;
+  catalog: readonly ProviderCatalog[];
 }
 
-export function ExperimentalSection({ prefs, onChange }: Props) {
+export function ExperimentalSection({ prefs, onChange, catalog }: Props) {
   const exp = prefs.experimental ?? {};
   const reactive = prefs.reactive_execution ?? {};
   const gate = prefs.gate_evaluation ?? {};
@@ -48,7 +49,7 @@ export function ExperimentalSection({ prefs, onChange }: Props) {
       </Field>
 
       <Field path="reactive_execution.subagent_model" label="Subagent Model" description="Optional model override for reactive subagents.">
-        <ModelPicker value={reactive.subagent_model} onChange={(v) => setReactive({ subagent_model: v })} catalog={MODEL_CATALOG} placeholder="Default" />
+        <ModelPicker value={reactive.subagent_model} onChange={(v) => setReactive({ subagent_model: v })} catalog={catalog} placeholder="Default" />
       </Field>
 
       <h3 className="text-sm font-medium text-gsd-text-dim mt-6 mb-2 uppercase tracking-wider">Gate Evaluation</h3>
@@ -75,7 +76,7 @@ export function ExperimentalSection({ prefs, onChange }: Props) {
         <ModelPicker
           value={prefs.auto_supervisor?.model}
           onChange={(v) => onChange({ ...prefs, auto_supervisor: { ...prefs.auto_supervisor, model: v } })}
-          catalog={MODEL_CATALOG}
+          catalog={catalog}
           placeholder="Current model"
         />
       </Field>

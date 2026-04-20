@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{
     config_path, load_json_at, load_preferences_at, normalize_stringy_ids, parse_frontmatter,
-    preferences_path, read_frontmatter_field, save_json_at, save_preferences_at,
+    preferences_path, preferences_read_path, read_frontmatter_field, save_json_at, save_preferences_at,
     serialize_preferences, write_atomic, ConfigDoc, JsonDoc,
 };
 
@@ -31,7 +31,7 @@ fn ensure_parent_dir(path: &PathBuf) -> Result<(), String> {
 
 #[tauri::command]
 fn load_preferences(project_path: Option<String>) -> Result<Value, String> {
-    let path = preferences_path(project_path.as_deref())?;
+    let path = preferences_read_path(project_path.as_deref())?;
     load_preferences_at(&path)
 }
 
@@ -48,9 +48,14 @@ fn get_preferences_path(project_path: Option<String>) -> Result<String, String> 
         .to_string())
 }
 
+#[tauri::command]
+fn close_window(window: tauri::Window) -> Result<(), String> {
+    window.destroy().map_err(|e| e.to_string())
+}
+
 // ─── Settings / Models commands ─────────────────────────────────────────────
 //
-// GSD2 reads three independent config files: preferences.md (above),
+// GSD2 reads three independent config files: PREFERENCES.md (above),
 // settings.json (agent runtime), and models.json (custom providers). Settings
 // and models are plain JSON and share the same load/save machinery in
 // `core::{load_json_at, save_json_at}`. Each returns a JsonDoc (value + mtime)
@@ -890,6 +895,7 @@ pub fn run() {
             load_preferences,
             save_preferences,
             get_preferences_path,
+            close_window,
             load_settings,
             save_settings,
             get_settings_path,
