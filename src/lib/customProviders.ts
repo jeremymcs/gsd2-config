@@ -26,11 +26,13 @@ function toCatalogEntry(id: string, cfg: CustomProviderConfig): ProviderCatalog 
 /**
  * Merge custom providers into the base catalog. Built-in wins on collision —
  * the colliding custom entry is dropped from the merged catalog but returned
- * in `collisions` so the UI can prompt the user to rename.
+ * in `collisions` so the UI can prompt the user to rename. Custom providers
+ * are listed first because users who add them usually want to pick them.
  */
 export function mergeCustomProviders(
   base: readonly ProviderCatalog[],
   models: GSDModelsConfig | undefined,
+  options: { customOnly?: boolean } = {},
 ): { catalog: readonly ProviderCatalog[]; collisions: string[] } {
   const providers = models?.providers ?? {};
   const baseIds = new Set(base.map((p) => p.id));
@@ -44,5 +46,5 @@ export function mergeCustomProviders(
     }
     extras.push(toCatalogEntry(id, cfg));
   }
-  return { catalog: [...base, ...extras], collisions };
+  return { catalog: options.customOnly ? extras : [...extras, ...base], collisions };
 }

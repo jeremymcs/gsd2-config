@@ -3,14 +3,15 @@
 
 import type { GSDPreferences, DynamicRoutingConfig } from "../../types";
 import { Field, Toggle, ModelPicker, SectionHeader } from "../FormControls";
-import { MODEL_CATALOG } from "../../constants";
+import type { ProviderCatalog } from "../../constants";
 
 interface Props {
   prefs: GSDPreferences;
   onChange: (prefs: GSDPreferences) => void;
+  catalog: readonly ProviderCatalog[];
 }
 
-export function RoutingSection({ prefs, onChange }: Props) {
+export function RoutingSection({ prefs, onChange, catalog }: Props) {
   const routing = prefs.dynamic_routing ?? {};
   const setRouting = (update: Partial<DynamicRoutingConfig>) =>
     onChange({ ...prefs, dynamic_routing: { ...routing, ...update } });
@@ -54,7 +55,7 @@ export function RoutingSection({ prefs, onChange }: Props) {
         <ModelPicker
           value={tiers.light}
           onChange={(v) => setRouting({ tier_models: { ...tiers, light: v } })}
-          catalog={MODEL_CATALOG}
+          catalog={catalog}
           placeholder="Default"
         />
       </Field>
@@ -63,7 +64,7 @@ export function RoutingSection({ prefs, onChange }: Props) {
         <ModelPicker
           value={tiers.standard}
           onChange={(v) => setRouting({ tier_models: { ...tiers, standard: v } })}
-          catalog={MODEL_CATALOG}
+          catalog={catalog}
           placeholder="Default"
         />
       </Field>
@@ -72,7 +73,7 @@ export function RoutingSection({ prefs, onChange }: Props) {
         <ModelPicker
           value={tiers.heavy}
           onChange={(v) => setRouting({ tier_models: { ...tiers, heavy: v } })}
-          catalog={MODEL_CATALOG}
+          catalog={catalog}
           placeholder="Default"
         />
       </Field>

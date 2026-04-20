@@ -5,18 +5,15 @@ import type {
   GSDPreferences,
   GSDModelConfig,
   GSDPhaseModelConfig,
-  GSDModelsConfig,
 } from "../../types";
 import { MODEL_PHASES } from "../../types";
 import { Field, ModelChain, SectionHeader } from "../FormControls";
-import { MODEL_CATALOG } from "../../constants";
-import { mergeCustomProviders } from "../../lib/customProviders";
+import type { ProviderCatalog } from "../../constants";
 
 interface Props {
   prefs: GSDPreferences;
   onChange: (prefs: GSDPreferences) => void;
-  /** Custom providers loaded from models.json — merged into dropdown catalog. */
-  customModels?: GSDModelsConfig;
+  catalog: readonly ProviderCatalog[];
 }
 
 type PhaseKey = (typeof MODEL_PHASES)[number];
@@ -55,9 +52,8 @@ function parseQualified(
   return { model: v };
 }
 
-export function ModelsSection({ prefs, onChange, customModels }: Props) {
+export function ModelsSection({ prefs, onChange, catalog }: Props) {
   const models = (prefs.models ?? {}) as GSDModelConfig;
-  const { catalog: mergedCatalog } = mergeCustomProviders(MODEL_CATALOG, customModels);
 
   /** Write phase config from an ordered chain: [0] = primary, [1..] = fallbacks. */
   const setPhase = (phase: PhaseKey, chain: string[]) => {
@@ -68,7 +64,7 @@ export function ModelsSection({ prefs, onChange, customModels }: Props) {
       next = undefined;
     } else {
       const [primary, ...fb] = cleaned;
-      const { provider, model } = parseQualified(primary, mergedCatalog);
+      const { provider, model } = parseQualified(primary, catalog);
       if (provider || fb.length > 0) {
         next = {
           model,
@@ -106,7 +102,7 @@ export function ModelsSection({ prefs, onChange, customModels }: Props) {
               <ModelChain
                 chain={chain}
                 onChange={(next) => setPhase(phase, next)}
-                catalog={mergedCatalog}
+                catalog={catalog}
                 className="w-64"
               />
             </Field>

@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
+const PREFERENCES_FILE: &str = "PREFERENCES.md";
+const LEGACY_PREFERENCES_FILE: &str = "preferences.md";
+
 // ─── Per-file mutex registry ────────────────────────────────────────────────
 //
 // Two open windows editing the same prefs file would otherwise race on
@@ -105,22 +108,55 @@ pub fn read_frontmatter_field(yaml: &str, key: &str) -> Option<String> {
 
 // ─── Path resolution ────────────────────────────────────────────────────────
 
-/// Resolve the preferences path for global (None/empty) or project scope.
-/// Errors if `project_path` is provided but does not exist.
-pub fn preferences_path(project_path: Option<&str>) -> Result<PathBuf, String> {
+fn preferences_dir(project_path: Option<&str>) -> Result<PathBuf, String> {
     match project_path {
         Some(p) if !p.is_empty() => {
             let base = PathBuf::from(p);
             if !base.exists() {
                 return Err(format!("Project folder does not exist: {}", p));
             }
-            Ok(base.join(".gsd").join("preferences.md"))
+            Ok(base.join(".gsd"))
         }
         _ => {
             let home = dirs::home_dir().ok_or("could not resolve home directory")?;
-            Ok(home.join(".gsd").join("preferences.md"))
+            Ok(home.join(".gsd"))
         }
     }
+}
+
+fn dir_has_exact_child(dir: &Path, file_name: &str) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .map(|name| name == file_name)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Resolve the canonical preferences path for global (None/empty) or project scope.
+/// Errors if `project_path` is provided but does not exist.
+pub fn preferences_path(project_path: Option<&str>) -> Result<PathBuf, String> {
+    Ok(preferences_dir(project_path)?.join(PREFERENCES_FILE))
+}
+
+/// Resolve the preferences path to read, preferring canonical PREFERENCES.md
+/// while preserving compatibility with older lowercase preferences.md files.
+pub fn preferences_read_path(project_path: Option<&str>) -> Result<PathBuf, String> {
+    let dir = preferences_dir(project_path)?;
+    let canonical = dir.join(PREFERENCES_FILE);
+    if dir_has_exact_child(&dir, PREFERENCES_FILE) {
+        return Ok(canonical);
+    }
+    let legacy = dir.join(LEGACY_PREFERENCES_FILE);
+    if dir_has_exact_child(&dir, LEGACY_PREFERENCES_FILE) {
+        return Ok(legacy);
+    }
+    Ok(canonical)
 }
 
 // ─── Preferences load/save ──────────────────────────────────────────────────
@@ -216,7 +252,7 @@ pub fn save_preferences_at(path: &Path, prefs: &Value) -> Result<(), String> {
 // ─── Generic JSON document load/save ────────────────────────────────────────
 //
 // settings.json and models.json are plain JSON (not YAML frontmatter), but
-// they share the same safety needs as preferences.md: atomic write, per-path
+// they share the same safety needs as PREFERENCES.md: atomic write, per-path
 // mutex, `.bak` sibling, and protection against silently clobbering edits
 // made by GSD2 itself while the editor was open.
 //
@@ -235,6 +271,7 @@ pub enum ConfigDoc {
 /// Typed resolver for every config file the editor touches.
 ///
 /// Path asymmetry is intentional and matches what GSD2 actually reads:
+///   - preferences live at canonical `PREFERENCES.md`
 ///   - project settings.json lives at `<p>/.gsd/settings.json`
 ///   - project models.json lives at `<p>/.gsd/agent/models.json`
 /// Centralising the table here keeps the asymmetry explicit and testable.
@@ -248,10 +285,7 @@ pub fn config_path(doc: ConfigDoc, project_path: Option<&str>) -> Result<PathBuf
         Ok(base)
     };
     match (doc, project_path) {
-        (ConfigDoc::Preferences, Some(p)) if !p.is_empty() => {
-            Ok(project_base(p)?.join(".gsd").join("preferences.md"))
-        }
-        (ConfigDoc::Preferences, _) => Ok(home()?.join(".gsd").join("preferences.md")),
+        (ConfigDoc::Preferences, project_path) => preferences_path(project_path),
         (ConfigDoc::Settings, Some(p)) if !p.is_empty() => {
             Ok(project_base(p)?.join(".gsd").join("settings.json"))
         }
@@ -628,7 +662,7 @@ mod tests {
     #[test]
     fn config_path_resolves_global_variants() {
         let global_prefs = config_path(ConfigDoc::Preferences, None).unwrap();
-        assert!(global_prefs.ends_with(".gsd/preferences.md"));
+        assert!(global_prefs.ends_with(".gsd/PREFERENCES.md"));
         let global_settings = config_path(ConfigDoc::Settings, None).unwrap();
         assert!(global_settings.ends_with(".gsd/agent/settings.json"));
         let global_models = config_path(ConfigDoc::Models, None).unwrap();
@@ -641,7 +675,7 @@ mod tests {
         let proj = tmp.path().to_string_lossy().to_string();
 
         let prefs = config_path(ConfigDoc::Preferences, Some(&proj)).unwrap();
-        assert!(prefs.ends_with(".gsd/preferences.md"));
+        assert!(prefs.ends_with(".gsd/PREFERENCES.md"));
 
         // Project settings.json lives at .gsd/settings.json (NOT .gsd/agent/)
         let settings = config_path(ConfigDoc::Settings, Some(&proj)).unwrap();
@@ -662,6 +696,31 @@ mod tests {
         let err = config_path(ConfigDoc::Settings, Some("/definitely/not/a/real/path/xyz"))
             .unwrap_err();
         assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn preferences_read_path_falls_back_to_legacy_lowercase() {
+        let tmp = TempDir::new().unwrap();
+        let gsd = tmp.path().join(".gsd");
+        fs::create_dir_all(&gsd).unwrap();
+        let legacy = gsd.join("preferences.md");
+        fs::write(&legacy, "---\nversion: 1\n---\n").unwrap();
+
+        let resolved =
+            preferences_read_path(Some(&tmp.path().to_string_lossy())).expect("read path");
+        assert!(resolved.ends_with(".gsd/preferences.md"));
+    }
+
+    #[test]
+    fn preferences_read_path_uses_canonical_uppercase_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let gsd = tmp.path().join(".gsd");
+        fs::create_dir_all(&gsd).unwrap();
+        fs::write(gsd.join("PREFERENCES.md"), "---\nmode: team\n---\n").unwrap();
+
+        let resolved =
+            preferences_read_path(Some(&tmp.path().to_string_lossy())).expect("read path");
+        assert!(resolved.ends_with(".gsd/PREFERENCES.md"));
     }
 
     #[test]

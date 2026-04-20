@@ -19,11 +19,18 @@ import type {
 interface Props {
   value: GSDModelsConfig;
   onChange: (next: GSDModelsConfig) => void;
+  customModelsOnly: boolean;
+  onCustomModelsOnlyChange: (next: boolean) => void;
 }
 
 const BUILTIN_IDS = new Set(MODEL_CATALOG.map((p) => p.id));
 
-export function CustomProvidersSection({ value, onChange }: Props) {
+export function CustomProvidersSection({
+  value,
+  onChange,
+  customModelsOnly,
+  onCustomModelsOnlyChange,
+}: Props) {
   const providers = value.providers ?? {};
   const entries = Object.entries(providers);
 
@@ -72,16 +79,25 @@ export function CustomProvidersSection({ value, onChange }: Props) {
         description="Register additional model providers GSD can route to. Writes to ~/.gsd/agent/models.json (or the project equivalent). Built-in providers always win on ID collision — rename any custom provider that shares a name with one of the built-ins."
       />
 
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-4">
         <div className="text-xs text-gsd-text-dim">
           {entries.length} provider{entries.length === 1 ? "" : "s"}
         </div>
-        <button
-          onClick={addProvider}
-          className="px-3 py-1.5 text-xs rounded-md bg-gsd-accent text-gsd-on-accent font-medium hover:bg-gsd-accent-hover transition-colors"
-        >
-          + Add provider
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-gsd-text-dim">
+            <span>Only custom in model lists</span>
+            <Toggle
+              checked={customModelsOnly}
+              onChange={onCustomModelsOnlyChange}
+            />
+          </label>
+          <button
+            onClick={addProvider}
+            className="px-3 py-1.5 text-xs rounded-md bg-gsd-accent text-gsd-on-accent font-medium hover:bg-gsd-accent-hover transition-colors"
+          >
+            + Add provider
+          </button>
+        </div>
       </div>
 
       {entries.length === 0 && (

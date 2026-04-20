@@ -16,7 +16,7 @@ Desktop configuration manager for [GSD-2](https://github.com/jmcspadden/gsd) pre
 
 ## What it does
 
-- **Edit preferences visually.** Every field in `.gsd/preferences.md` (or `~/.gsd/preferences.md`) is exposed across organized sections — models, git, hooks, parallel execution, safety, verification, routing, and more.
+- **Edit preferences visually.** Every field in `.gsd/PREFERENCES.md` (or `~/.gsd/PREFERENCES.md`) is exposed across organized sections — models, git, hooks, parallel execution, safety, verification, routing, and more.
 - **Global or project scope.** Toggle between editing your global preferences or a per-project file. Recent projects are remembered.
 - **Skills library.** Browse, edit, create, and delete `SKILL.md` files in `~/.claude/skills/` and `<project>/.claude/skills/`. Legacy `gsd-*` bundled skills are filtered out.
 - **Agents library.** Same workflow for `.claude/agents/*.md` subagent definitions.
@@ -82,8 +82,8 @@ src-tauri/           Rust backend
 
 ## Where preferences live
 
-- **Global:** `~/.gsd/preferences.md`
-- **Project:** `<project>/.gsd/preferences.md`
+- **Global:** `~/.gsd/PREFERENCES.md`
+- **Project:** `<project>/.gsd/PREFERENCES.md`
 
 Both are markdown files with a YAML frontmatter block — fully compatible with hand editing if you ever need to drop into a text editor.
 
